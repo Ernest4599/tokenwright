@@ -3,7 +3,37 @@ export async function handler(event) {
     return { statusCode: 405, body: "Method not allowed" };
   }
 
-  const form = JSON.parse(event.body);
+  const body = JSON.parse(event.body);
+  const { email, ...form } = body;
+
+  if (!email) {
+    return { statusCode: 400, body: JSON.stringify({ error: "Email required" }) };
+  }
+
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+
+  const sbHeaders = {
+    apikey: SUPABASE_SECRET_KEY,
+    Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+    "Content-Type": "application/json",
+  };
+
+  const lookupRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/credits?email=eq.${encodeURIComponent(email)}`,
+    { headers: sbHeaders }
+  );
+  const rows = await lookupRes.json();
+  const record = rows[0];
+
+  const now = new Date();
+  const hasActiveSubscription =
+    record && record.expires_at && new Date(record.expires_at) > now;
+  const hasCredits = record && record.generations_left > 0;
+
+  if (!record || (!hasActiveSubscription && !hasCredits)) {
+    return { statusCode: 402, body: JSON.stringify({ error: "no_credits" }) };
+  }
 
   const prompt = `You are a senior product designer creating a design system.
 
@@ -66,14 +96,19 @@ Pick colors with sufficient contrast for text readability. Make choices specific
     const cleaned = raw.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(cleaned);
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify(parsed),
-    };
+    if (!hasActiveSubscription) {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/credits?email=eq.${encodeURIComponent(email)}`,
+        {
+          method: "PATCH",
+          headers: sbHeaders,
+          body: JSON.stringify({ generations_left: record.generations_left - 1 }),
+        }
+      );
+    }
+
+    return { statusCode: 200, body: JSON.stringify(parsed) };
   } catch (err) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: "Generation failed" }),
-    };
+    return { statusCode: 500, body: JSON.stringify({ error: "Generation failed" }) };
   }
-}
+    }
