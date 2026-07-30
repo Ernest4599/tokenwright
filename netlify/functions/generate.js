@@ -29,12 +29,32 @@ export async function handler(event) {
   const now = new Date();
   const hasActiveSubscription =
     record && record.expires_at && new Date(record.expires_at) > now;
-  const hasCredits = record && record.generations_left > 0;
 
-  if (!record || (!hasActiveSubscription && !hasCredits)) {
-    return { statusCode: 402, body: JSON.stringify({ error: "no_credits" }) };
+  // Unlimited plan: no need to touch credits at all.
+  if (hasActiveSubscription) {
+    return await runGeneration(form);
   }
 
+  // Credit-based plan: atomically try to spend one credit.
+  // decrement_credit only succeeds if generations_left > 0,
+  // so two simultaneous requests can't both succeed on the same last credit.
+  if (record) {
+    const decrementRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/decrement_credit`, {
+      method: "POST",
+      headers: sbHeaders,
+      body: JSON.stringify({ user_email: email }),
+    });
+    const success = await decrementRes.json();
+
+    if (success === true) {
+      return await runGeneration(form);
+    }
+  }
+
+  return { statusCode: 402, body: JSON.stringify({ error: "no_credits" }) };
+}
+
+async function runGeneration(form) {
   const prompt = `You are a senior product designer creating a design system.
 
 Product name: ${form.productName || "Untitled product"}
@@ -96,19 +116,8 @@ Pick colors with sufficient contrast for text readability. Make choices specific
     const cleaned = raw.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(cleaned);
 
-    if (!hasActiveSubscription) {
-      await fetch(
-        `${SUPABASE_URL}/rest/v1/credits?email=eq.${encodeURIComponent(email)}`,
-        {
-          method: "PATCH",
-          headers: sbHeaders,
-          body: JSON.stringify({ generations_left: record.generations_left - 1 }),
-        }
-      );
-    }
-
     return { statusCode: 200, body: JSON.stringify(parsed) };
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: "Generation failed" }) };
   }
-    }
+}

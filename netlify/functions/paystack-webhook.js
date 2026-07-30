@@ -1,12 +1,11 @@
 import crypto from "crypto";
 
 // Maps Paystack amount (in kobo) to what the buyer gets.
-// kobo = Naira x 100. Adjust these if you ever change your prices.
 const TIER_MAP = {
-  450000: { type: "credits", amount: 2 },      // 2 Generations - ₦4,500
-  750000: { type: "credits", amount: 10 },     // 10 Generations - ₦7,500
-  1350000: { type: "days", amount: 7 },        // Weekly Unlimited - ₦13,500
-  3000000: { type: "days", amount: 30 },       // Monthly Unlimited - ₦30,000
+  450000: { type: "credits", amount: 2 },
+  750000: { type: "credits", amount: 10 },
+  1350000: { type: "days", amount: 7 },
+  3000000: { type: "days", amount: 30 },
 };
 
 export async function handler(event) {
@@ -18,29 +17,34 @@ export async function handler(event) {
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 
-  // Verify this request genuinely came from Paystack, not an impostor.
   const signature = event.headers["x-paystack-signature"];
   const expectedSignature = crypto
     .createHmac("sha512", PAYSTACK_SECRET_KEY)
     .update(event.body)
     .digest("hex");
 
-  if (signature !== expectedSignature) {
+  const sigBuffer = Buffer.from(signature || "", "hex");
+  const expectedBuffer = Buffer.from(expectedSignature, "hex");
+  const validSignature =
+    sigBuffer.length === expectedBuffer.length &&
+    crypto.timingSafeEqual(sigBuffer, expectedBuffer);
+
+  if (!validSignature) {
     return { statusCode: 401, body: "Invalid signature" };
   }
 
   const payload = JSON.parse(event.body);
 
   if (payload.event !== "charge.success") {
-    // Ignore any other event type Paystack might send.
     return { statusCode: 200, body: "Ignored" };
   }
 
+  const reference = payload.data.reference;
   const email = payload.data.customer.email;
   const amountPaid = payload.data.amount;
   const tier = TIER_MAP[amountPaid];
 
-  if (!email || !tier) {
+  if (!email || !tier || !reference) {
     return { statusCode: 200, body: "No matching tier, ignored" };
   }
 
@@ -49,6 +53,16 @@ export async function handler(event) {
     Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
     "Content-Type": "application/json",
   };
+
+  const replayCheck = await fetch(`${SUPABASE_URL}/rest/v1/webhook_events`, {
+    method: "POST",
+    headers: { ...sbHeaders, Prefer: "return=minimal" },
+    body: JSON.stringify({ reference }),
+  });
+
+  if (replayCheck.status === 409) {
+    return { statusCode: 200, body: "Already processed" };
+  }
 
   const lookupRes = await fetch(
     `${SUPABASE_URL}/rest/v1/credits?email=eq.${encodeURIComponent(email)}`,
@@ -74,7 +88,6 @@ export async function handler(event) {
       });
     }
   } else {
-    // Subscription tiers: extend from whichever is later — now, or their current expiry.
     const now = new Date();
     const currentExpiry = existing?.expires_at ? new Date(existing.expires_at) : now;
     const base = currentExpiry > now ? currentExpiry : now;
