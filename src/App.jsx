@@ -12,8 +12,40 @@ const INDUSTRIES = [
 ];
 const COMPONENT_OPTIONS = ["Buttons", "Forms & inputs", "Cards", "Navigation", "Modals", "Tables"];
 
+const TIERS = [
+  {
+    name: "2 Generations",
+    price: "$3",
+    sub: "one-time",
+    badge: null,
+    link: "https://paystack.shop/pay/8i8j1n55dn",
+  },
+  {
+    name: "10 Generations",
+    price: "$5",
+    sub: "one-time",
+    badge: "Save 67% per generation",
+    link: "https://paystack.shop/pay/vijeb7gv8r",
+  },
+  {
+    name: "Weekly Unlimited",
+    price: "$9",
+    sub: "per week",
+    badge: "Most flexible",
+    link: "https://paystack.shop/pay/1e2c9hi8od",
+  },
+  {
+    name: "Monthly Unlimited",
+    price: "$20",
+    sub: "per month",
+    badge: "Save 37% vs weekly",
+    link: "https://paystack.shop/pay/0gtg4xl49j",
+  },
+];
+
 export default function App() {
-  const [step, setStep] = useState("form"); // form | loading | result | error
+  const [screen, setScreen] = useState("start"); // start | form | loading | result | error | no_credits
+  const [email, setEmail] = useState("");
   const [form, setForm] = useState({
     productName: "",
     description: "",
@@ -33,23 +65,28 @@ export default function App() {
   }
 
   async function generate() {
-    setStep("loading");
+    setScreen("loading");
     setErrorMsg("");
 
     try {
       const response = await fetch("/.netlify/functions/generate", {
         method: "POST",
-        body: JSON.stringify(form),
+        body: JSON.stringify({ email, ...form }),
       });
+
+      if (response.status === 402) {
+        setScreen("no_credits");
+        return;
+      }
 
       if (!response.ok) throw new Error("Request failed");
 
       const parsed = await response.json();
       setTokens(parsed);
-      setStep("result");
+      setScreen("result");
     } catch (err) {
       setErrorMsg("Something went wrong generating your design system. Let's try again.");
-      setStep("error");
+      setScreen("error");
     }
   }
 
@@ -66,7 +103,7 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
         * { box-sizing: border-box; }
         body { margin: 0; }
-        input[type="text"], textarea, select {
+        input[type="text"], input[type="email"], textarea, select {
           background: #2E323A;
           border: 1px solid #3C4048;
           color: #EDEAE3;
@@ -77,7 +114,7 @@ export default function App() {
           width: 100%;
           outline: none;
         }
-        input[type="text"]:focus, textarea:focus, select:focus {
+        input:focus, textarea:focus, select:focus {
           border-color: #C98A3E;
         }
         ::placeholder { color: #6B6F78; }
@@ -108,23 +145,124 @@ export default function App() {
           Forge a design system
         </h1>
 
-        {step === "form" && <FormView form={form} setForm={setForm} toggle={toggle} onSubmit={generate} />}
-        {step === "loading" && <LoadingView />}
-        {step === "error" && (
+        {screen === "start" && (
+          <StartView email={email} setEmail={setEmail} onContinue={() => setScreen("form")} />
+        )}
+
+        {screen === "form" && (
+          <FormView form={form} setForm={setForm} toggle={toggle} onSubmit={generate} onBack={() => setScreen("start")} />
+        )}
+
+        {screen === "loading" && <LoadingView />}
+
+        {screen === "no_credits" && (
+          <div>
+            <p style={{ color: "#EDEAE3", marginBottom: 24, lineHeight: 1.5 }}>
+              You're out of generations for <strong>{email}</strong>. Pick a plan below, then come back and hit Generate again with the same email.
+            </p>
+            <PricingCards />
+            <button onClick={() => setScreen("form")} style={{ ...secondaryBtnStyle, marginTop: 24 }}>
+              ← Back
+            </button>
+          </div>
+        )}
+
+        {screen === "error" && (
           <div>
             <p style={{ color: "#E8897A", marginBottom: 16 }}>{errorMsg}</p>
-            <button onClick={() => setStep("form")} style={secondaryBtnStyle}>
+            <button onClick={() => setScreen("form")} style={secondaryBtnStyle}>
               Back to form
             </button>
           </div>
         )}
-        {step === "result" && tokens && <ResultView tokens={tokens} onStartOver={() => setStep("form")} />}
+
+        {screen === "result" && tokens && (
+          <ResultView tokens={tokens} onStartOver={() => setScreen("form")} />
+        )}
       </div>
     </div>
   );
 }
 
-function FormView({ form, setForm, toggle, onSubmit }) {
+function StartView({ email, setEmail, onContinue }) {
+  return (
+    <div>
+      <p style={{ color: "#9CA0A8", fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
+        Enter your email, pick a plan, then generate your design system.
+      </p>
+
+      <Field label="Your email">
+        <input
+          type="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      </Field>
+
+      <div style={{ marginTop: 32, marginBottom: 32 }}>
+        <SectionLabel>Plans</SectionLabel>
+        <PricingCards />
+      </div>
+
+      <button
+        onClick={onContinue}
+        disabled={!email}
+        style={{ ...primaryBtnStyle, opacity: email ? 1 : 0.5 }}
+      >
+        Continue →
+      </button>
+    </div>
+  );
+}
+
+function PricingCards() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {TIERS.map((tier) => (
+        <a
+          key={tier.name}
+          href={tier.link}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            background: "#2E323A",
+            border: "1px solid #3C4048",
+            borderRadius: 8,
+            padding: "14px 16px",
+            textDecoration: "none",
+            color: "#EDEAE3",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>{tier.name}</div>
+            {tier.badge && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "#C98A3E",
+                  marginTop: 2,
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                {tier.badge}
+              </div>
+            )}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{tier.price}</div>
+            <div style={{ fontSize: 11, color: "#9CA0A8" }}>{tier.sub}</div>
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function FormView({ form, setForm, toggle, onSubmit, onBack }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <Field label="Product name">
