@@ -19,6 +19,18 @@ export async function handler(event) {
     "Content-Type": "application/json",
   };
 
+  // Confirm this email actually completed the verification step.
+  const verifyRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/verification_codes?email=eq.${encodeURIComponent(email)}`,
+    { headers: sbHeaders }
+  );
+  const verifyRows = await verifyRes.json();
+  const verifyRecord = verifyRows[0];
+
+  if (!verifyRecord || verifyRecord.verified !== true) {
+    return { statusCode: 403, body: JSON.stringify({ error: "not_verified" }) };
+  }
+
   const lookupRes = await fetch(
     `${SUPABASE_URL}/rest/v1/credits?email=eq.${encodeURIComponent(email)}`,
     { headers: sbHeaders }
@@ -30,14 +42,10 @@ export async function handler(event) {
   const hasActiveSubscription =
     record && record.expires_at && new Date(record.expires_at) > now;
 
-  // Unlimited plan: no need to touch credits at all.
   if (hasActiveSubscription) {
     return await runGeneration(form);
   }
 
-  // Credit-based plan: atomically try to spend one credit.
-  // decrement_credit only succeeds if generations_left > 0,
-  // so two simultaneous requests can't both succeed on the same last credit.
   if (record) {
     const decrementRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/decrement_credit`, {
       method: "POST",
